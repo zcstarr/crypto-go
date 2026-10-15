@@ -485,7 +485,10 @@ func verifyDetached(msgToCheck, msgToAuth []byte, verifier *xdsa.PublicKey, doma
 		ExternalAAD: aad,
 		Payload:     []byte{},
 	}
-	toBeSigned, _ := cbor.Marshal(&sig)
+	toBeSigned, err := cbor.Marshal(&sig)
+	if err != nil {
+		return err
+	}
 
 	// Verify signature
 	var xdsasig xdsa.Signature = sign1.Signature
@@ -581,7 +584,10 @@ func verify(msgToCheck, msgToAuth []byte, verifier *xdsa.PublicKey, domain []byt
 		ExternalAAD: aad,
 		Payload:     sign1.Payload,
 	}
-	toBeSigned, _ := cbor.Marshal(&sig)
+	toBeSigned, err := cbor.Marshal(&sig)
+	if err != nil {
+		return nil, err
+	}
 
 	// Verify signature
 	var xdsasig xdsa.Signature = sign1.Signature
