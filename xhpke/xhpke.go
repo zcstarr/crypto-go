@@ -240,6 +240,9 @@ func (k *SecretKey) Fingerprint() Fingerprint {
 // Note: X-Wing uses Base mode (no sender authentication). The sender's identity
 // cannot be verified from the ciphertext alone.
 func (k *SecretKey) Open(sessionKey *[EncapKeySize]byte, msgToOpen, msgToAuth, domain []byte) ([]byte, error) {
+	if sessionKey == nil {
+		return nil, ErrOpenFailed
+	}
 	// Restrict the user's domain to the context of this library
 	info := append([]byte(DomainPrefix), domain...)
 
@@ -269,6 +272,9 @@ func (k *SecretKey) Open(sessionKey *[EncapKeySize]byte, msgToOpen, msgToAuth, d
 // Note: X-Wing uses Base mode (no sender authentication). The sender's identity
 // cannot be verified from the context alone.
 func (k *SecretKey) NewReceiver(sessionKey *[EncapKeySize]byte, domain []byte) (*Receiver, error) {
+	if sessionKey == nil {
+		return nil, ErrOpenFailed
+	}
 	// Restrict the user's domain to the context of this library
 	info := append([]byte(DomainPrefix), domain...)
 
