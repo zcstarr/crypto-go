@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crypto-go fix/bugs — what broke and what changed</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --txt:#e6edf3; --mut:#9aa4b2;
+         --red:#f85149; --green:#3fb950; --amber:#d29922; --blue:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.55 system-ui,sans-serif; }
+  header { padding:28px 22px 18px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0 0 6px; font-size:22px; }
+  header p { margin:4px 0; color:var(--mut); max-width:70ch; }
+  code, pre { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; }
+  pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; }
+  .wrap { padding:20px 22px 60px; max-width:1000px; margin:0 auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:16px 0; }
+  .card h2 { margin:0 0 4px; font-size:17px; }
+  .meta { color:var(--mut); font-size:13px; margin-bottom:10px; }
+  .badge { display:inline-block; font-size:12px; border:1px solid var(--line); border-radius:20px; padding:1px 10px; margin-right:6px; }
+  .b-red { color:var(--red); border-color:var(--red); } .b-green { color:var(--green); border-color:var(--green); }
+  .b-amber { color:var(--amber); border-color:var(--amber); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:760px){ .grid{grid-template-columns:1fr;} }
+  .before { border-left:3px solid var(--red); padding-left:12px; }
+  .after { border-left:3px solid var(--green); padding-left:12px; }
+  label { display:block; margin:8px 0 2px; color:var(--mut); font-size:13px; }
+  input[type=number], input[type=text] { width:100%; background:#0a0d12; color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:8px; }
+  input[type=range]{ width:100%; }
+  .out { background:#0a0d12; border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin-top:8px; min-height:40px; }
+  .ok { color:var(--green); } .bad { color:var(--red); } .warn { color:var(--amber); }
+  button { background:var(--blue); color:#04101f; border:0; border-radius:6px; padding:8px 14px; font-weight:600; cursor:pointer; margin-top:8px; }
+  a { color:var(--blue); }
+  footer { color:var(--mut); font-size:13px; border-top:1px solid var(--line); padding:16px 22px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>crypto-go <code>fix/bugs</code> — bug explainer</h1>
+  <p>Branch <code>fix/bugs</code> (12 commits on top of <code>main</code>) fixes denial-of-service panics and silent data-corruption bugs found by a <code>gstyle --skill</code> scan. Tests were green before and after — none of these paths were exercised.</p>
+  <p>Verify locally: <code>git log --oneline main..fix/bugs</code> · <code>go test $(go list ./... | grep -v stream/internal)</code></p>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>1. Nil signature panics in every Verify</h2>
+    <div class="meta"><span class="badge b-red">DoS · panic</span><span class="badge">eddsa · mldsa · rsa · xdsa</span></div>
+    <div class="grid">
+      <div class="before"><b>Before</b><pre>func (k *PublicKey) Verify(msg []byte, sig *Signature) error {
+    mPrime := cmldsaMessagePrime(msg)
+    mlSig, edSig := sig.Split() // nil → panic
+    ...</pre></div>
+      <div class="after"><b>After</b><pre>func (k *PublicKey) Verify(msg []byte, sig *Signature) error {
+    if sig == nil {
+        return ErrInvalidSignature
+    }
+    ...</pre></div>
+    </div>
+    <p>Any lookup-miss or failed decode forwarded as <code>nil</code> crashed the process instead of failing authentication. A remote <code>kid</code> + missing key = crash. Now it returns a normal verification error.</p>
+    <p class="meta">Commits: eddsa <code>4be2a07</code> · mldsa <code>6a8147b</code> · rsa <code>f76444e</code> (Verify + VerifyHash) · xdsa <code>3bcb563</code>. Reproduced before: <code>nil pointer dereference</code>; after: <code>signature verification failed</code>.</p>
+    <label>Simulate: pass a null signature through a nil-unsafe verifier</label>
+    <button onclick="document.getElementById('d1').innerHTML='<span class=bad>panic: runtime error: invalid memory address or nil pointer dereference</span> (before) → <span class=ok>ErrInvalidSignature</span> (after)'">Run simulation</button>
+    <div class="out" id="d1">Press run.</div>
+  </div>
+
+  <div class="card">
+    <h2>2. Nil session key panics in xHPKE decrypt</h2>
+    <div class="meta"><span class="badge b-red">DoS · panic</span><span class="badge">xhpke/xhpke.go:242,271</span></div>
+    <div class="grid">
+      <div class="before"><b>Before</b><pre>recipient, err := hpke.NewRecipient(
+    sessionKey[:], // nil → panic
+    ...</pre></div>
+      <div class="after"><b>After</b><pre>if sessionKey == nil {
+    return nil, ErrOpenFailed
+}</pre></div>
+    </div>
+    <p>Same shape on the decrypt path (<code>Open</code> + <code>NewReceiver</code>). <code>cose.Decrypt</code> length-checks first so it was safe; direct xHPKE callers were not.</p>
+    <p class="meta">Commit <code>e9c3a12</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>3. Nil verifier / recipient panics in COSE header checks</h2>
+    <div class="meta"><span class="badge b-amber">DoS · defense in depth</span><span class="badge">cose/cose.go:903,922</span></div>
+    <div class="grid">
+      <div class="before"><b>Before</b><pre>if header.Kid != verifier.Fingerprint() { // nil → panic</pre></div>
+      <div class="after"><b>After</b><pre>if verifier == nil {
+    return nil, ErrUnexpectedKey
+}</pre></div>
+    </div>
+    <p>App flow <code>Signer(bytes)</code> → key lookup miss → <code>Verify(..., nil, ...)</code> crashed instead of reporting “unknown key”. Now returns <code>ErrUnexpectedKey</code>.</p>
+    <p class="meta">Commit <code>856dfb2</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>4. Swallowed marshal errors in COSE verify</h2>
+    <div class="meta"><span class="badge b-amber">hygiene · error masking</span><span class="badge">cose/cose.go:488,584</span></div>
+    <div class="grid">
+      <div class="before"><b>Before</b><pre>toBeSigned, _ := cbor.Marshal(&amp;sig)</pre></div>
+      <div class="after"><b>After</b><pre>toBeSigned, err := cbor.Marshal(&amp;sig)
+if err != nil {
+    return err // (or nil, err)
+}</pre></div>
+    </div>
+    <p>Not exploitable today (fixed context string, non-nil buffers), but a future struct change could make marshal fallible — then verify would run over nil bytes and misreport <code>ErrInvalidSignature</code> instead of the real cause.</p>
+    <p class="meta">Commit <code>df098cb</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>5. Negative array/map headers encoded as giant uint64</h2>
+    <div class="meta"><span class="badge b-red">wire corruption · peer DoS</span><span class="badge">cbor/cbor.go:248</span></div>
+    <p>Before: <code>uint64(-1)</code> → <code>18446744073709551615</code>. A single buggy caller emits a header claiming ~18 quintillion items; the peer tries to honor it.</p>
+    <label>Try it: enter a negative length</label>
+    <input type="number" id="negIn" value="-1">
+    <button onclick="const v=BigInt(document.getElementById('negIn').value||0);const u=(v+2n**64n)%(2n**64n);document.getElementById('d5').innerHTML='uint64('+v+') = <span class=bad>'+u+'</span> → after fix: <span class=ok>panic: cbor: negative … header length</span>'">Encode</button>
+    <div class="out" id="d5">…</div>
+    <p class="meta">Commit <code>d22dce9</code>. Panic is intentional: caller bug, fail fast locally instead of corrupting the wire.</p>
+  </div>
+
+  <div class="card">
+    <h2>6. Narrow-int silent truncation</h2>
+    <div class="meta"><span class="badge b-red">data corruption</span><span class="badge">cbor/reflect.go:365</span></div>
+    <p>Before: CBOR <code>300</code> into <code>uint8</code> silently stored <code>44</code> (<code>reflect.SetUint</code> wraps). Counts, versions, key ids could pass validation with the wrong value. After: <code>ErrIntegerOverflow</code> via <code>OverflowUint/OverflowInt</code>.</p>
+    <label>Try it: decode value into uint8</label>
+    <input type="number" id="trIn" value="300" min="0" max="99999">
+    <button onclick="const v=+document.getElementById('trIn').value;const t=v&0xFF;document.getElementById('d6').innerHTML='before: <span class=bad>'+v+' → '+t+' (silent wrap)</span><br>after: <span class=ok>'+(v>255?'ErrIntegerOverflow':'ok')+'</span>'">Decode</button>
+    <div class="out" id="d6">…</div>
+    <p class="meta">Commit <code>bd59bcf</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>7. Unbounded nested decode → stack exhaustion</h2>
+    <div class="meta"><span class="badge b-red">resource exhaustion</span><span class="badge">cbor/reflect.go:318</span></div>
+    <p>Before: <code>decodeValue</code> recursed with no counter; <code>maxDepth=32</code> only applied to the <code>Raw</code>/<code>Verify</code> path. After: threaded depth counter, both paths share the bound.</p>
+    <label>Simulate nesting depth (limit 32)</label>
+    <input type="range" id="dpIn" min="1" max="60" value="40" oninput="document.getElementById('dpV').textContent=this.value">
+    <span id="dpV">40</span>
+    <button onclick="const d=+document.getElementById('dpIn').value;document.getElementById('d7').innerHTML=d>32?'<span class=bad>depth '+d+': ErrMaxDepthExceeded (after fix; before: recurse until stack grows)</span>':'<span class=ok>depth '+d+': ok</span>'">Decode nested input</button>
+    <div class="out" id="d7">…</div>
+    <p class="meta">Commit <code>a122f6d</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>8. Nil / non-pointer decode target panic</h2>
+    <div class="meta"><span class="badge b-amber">robustness</span><span class="badge">cbor/reflect.go:312</span></div>
+    <div class="grid">
+      <div class="before"><b>Before</b><pre>Decode(nil) → reflect panic</pre></div>
+      <div class="after"><b>After</b><pre>if !rv.IsValid() || rv.Kind() != Ptr || rv.IsNil() {
+    return ErrUnsupportedType
+}</pre></div>
+    </div>
+    <p class="meta">Commit <code>bb24295</code>. No change for correct callers.</p>
+  </div>
+
+  <div class="card">
+    <h2>What was deliberately left alone</h2>
+    <p>· gstyle <code>nil_guard</code> on <code>cose/cose.go:477,573</code> — false positive (<code>header</code> is <code>nil,err</code>-paired, deref is err-guarded).<br>
+    · gstyle <code>deviant</code> on <code>stream/internal/stream.go:105,107</code> — false positive (errors assigned to <code>r.err</code>, not discarded).<br>
+    · <code>ParsePublicKeyDER</code> clone divergence — stylistic only, probed safe.<br>
+    · Stale-before-verify ordering — real tradeoff, left for maintainer decision.</p>
+  </div>
+
+</div>
+<footer>Branch <code>fix/bugs</code> · full analysis in <code>scan-impact-report.md</code> · generated from the scan fixes.</footer>
+</body>
+</html>
