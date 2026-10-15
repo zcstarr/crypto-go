@@ -246,11 +246,17 @@ func (e *Encoder) EncodeText(value string) error {
 
 // EncodeArrayHeader encodes an array size.
 func (e *Encoder) EncodeArrayHeader(length int) {
+	if length < 0 {
+		panic("cbor: negative array header length")
+	}
 	e.encodeLength(MajorArray, uint64(length))
 }
 
 // EncodeMapHeader encodes a map size.
 func (e *Encoder) EncodeMapHeader(length int) {
+	if length < 0 {
+		panic("cbor: negative map header length")
+	}
 	e.encodeLength(MajorMap, uint64(length))
 }
 

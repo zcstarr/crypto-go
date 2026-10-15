@@ -424,6 +424,9 @@ func (k *PublicKey) UnmarshalCBOR(dec *cbor.Decoder) error {
 // context must match the one used for signing. A context longer than 255 bytes
 // is rejected with ErrInvalidSignature.
 func (k *PublicKey) Verify(message []byte, ctx []byte, sig *Signature) error {
+	if sig == nil {
+		return ErrInvalidSignature
+	}
 	if !mldsa65.Verify(k.key, message, ctx, sig[:]) {
 		return ErrInvalidSignature
 	}

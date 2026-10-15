@@ -310,12 +310,23 @@ func Unmarshal(data []byte, v any) error {
 
 // Decode reads a value from the decoder using reflection.
 func (dec *Decoder) Decode(v any) error {
-	return decodeValue(dec, reflect.ValueOf(v), false)
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() || rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return ErrUnsupportedType
+	}
+	return decodeValue(dec, rv, false)
 }
 
 // decodeValue recursively decodes CBOR into a reflect.Value.
 // The optional flag indicates whether null values are allowed (from struct tag).
 func decodeValue(dec *Decoder, v reflect.Value, optional bool) error {
+	return decodeValueDepth(dec, v, optional, 0)
+}
+
+func decodeValueDepth(dec *Decoder, v reflect.Value, optional bool, depth int) error {
+	if depth > maxDepth {
+		return fmt.Errorf("%w: %d", ErrMaxDepthExceeded, maxDepth)
+	}
 	// Check if the value implements Unmarshaler (must be addressable pointer receiver)
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
@@ -367,6 +378,9 @@ func decodeValue(dec *Decoder, v reflect.Value, optional bool) error {
 		if err != nil {
 			return err
 		}
+		if v.OverflowUint(val) {
+			return ErrIntegerOverflow
+		}
 		v.SetUint(val)
 		return nil
 
@@ -374,6 +388,9 @@ func decodeValue(dec *Decoder, v reflect.Value, optional bool) error {
 		val, err := dec.DecodeInt()
 		if err != nil {
 			return err
+		}
+		if v.OverflowInt(val) {
+			return ErrIntegerOverflow
 		}
 		v.SetInt(val)
 		return nil
@@ -440,7 +457,7 @@ func decodeValue(dec *Decoder, v reflect.Value, optional bool) error {
 			v.SetLen(n)
 		}
 		for i := range n {
-			if err := decodeValue(dec, v.Index(i), false); err != nil {
+			if err := decodeValueDepth(dec, v.Index(i), false, depth+1); err != nil {
 				return err
 			}
 		}
@@ -467,7 +484,7 @@ func decodeValue(dec *Decoder, v reflect.Value, optional bool) error {
 			return fmt.Errorf("%w: %d, want %d", ErrUnexpectedItemCount, length, v.Len())
 		}
 		for i := range v.Len() {
-			if err := decodeValue(dec, v.Index(i), false); err != nil {
+			if err := decodeValueDepth(dec, v.Index(i), false, depth+1); err != nil {
 				return err
 			}
 		}
@@ -503,7 +520,7 @@ func decodeValue(dec *Decoder, v reflect.Value, optional bool) error {
 				valueField.Set(reflect.Zero(valueField.Type()))
 				return nil
 			}
-			if err := decodeValue(dec, valueField, false); err != nil {
+			if err := decodeValueDepth(dec, valueField, false, depth+1); err != nil {
 				return err
 			}
 			someField.SetBool(true)
@@ -524,7 +541,7 @@ func decodeValue(dec *Decoder, v reflect.Value, optional bool) error {
 				if err != nil {
 					return err
 				}
-				if err := decodeValue(dec, fv, f.optional); err != nil {
+				if err := decodeValueDepth(dec, fv, f.optional, depth+1); err != nil {
 					return err
 				}
 			}
@@ -574,7 +591,7 @@ func decodeValue(dec *Decoder, v reflect.Value, optional bool) error {
 					if err != nil {
 						return err
 					}
-					if err := decodeValue(dec, fv, mf.optional); err != nil {
+					if err := decodeValueDepth(dec, fv, mf.optional, depth+1); err != nil {
 						return err
 					}
 					decoded[idx] = true
