@@ -360,6 +360,9 @@ func (k *PublicKey) UnmarshalCBOR(dec *cbor.Decoder) error {
 
 // Verify verifies a digital signature.
 func (k *PublicKey) Verify(message []byte, sig *Signature) error {
+	if sig == nil {
+		return ErrInvalidSignature
+	}
 	if !ed25519.Verify(k.key, message, sig[:]) {
 		return ErrInvalidSignature
 	}
