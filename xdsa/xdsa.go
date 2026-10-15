@@ -496,6 +496,9 @@ func (k *PublicKey) UnmarshalCBOR(dec *cbor.Decoder) error {
 
 // Verify verifies a digital signature.
 func (k *PublicKey) Verify(message []byte, sig *Signature) error {
+	if sig == nil {
+		return ErrInvalidSignature
+	}
 	// Compute the M' that needed to be signed by the two keys
 	mPrime := cmldsaMessagePrime(message)
 
