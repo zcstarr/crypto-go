@@ -310,7 +310,11 @@ func Unmarshal(data []byte, v any) error {
 
 // Decode reads a value from the decoder using reflection.
 func (dec *Decoder) Decode(v any) error {
-	return decodeValue(dec, reflect.ValueOf(v), false)
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() || rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return ErrUnsupportedType
+	}
+	return decodeValue(dec, rv, false)
 }
 
 // decodeValue recursively decodes CBOR into a reflect.Value.
