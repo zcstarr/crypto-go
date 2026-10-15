@@ -475,6 +475,9 @@ func (k *PublicKey) UnmarshalCBOR(dec *cbor.Decoder) error {
 
 // Verify verifies a digital signature.
 func (k *PublicKey) Verify(message []byte, sig *Signature) error {
+	if sig == nil {
+		return ErrInvalidSignature
+	}
 	hash := sha256.Sum256(message)
 	if rsa.VerifyPKCS1v15(k.inner, crypto.SHA256, hash[:], sig[:]) != nil {
 		return ErrInvalidSignature
@@ -484,6 +487,9 @@ func (k *PublicKey) Verify(message []byte, sig *Signature) error {
 
 // VerifyHash verifies a digital signature on an already hashed message.
 func (k *PublicKey) VerifyHash(hash []byte, sig *Signature) error {
+	if sig == nil {
+		return ErrInvalidSignature
+	}
 	if rsa.VerifyPKCS1v15(k.inner, crypto.SHA256, hash, sig[:]) != nil {
 		return ErrInvalidSignature
 	}
