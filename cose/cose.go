@@ -901,6 +901,9 @@ func Recipient(ciphertext []byte) (xhpke.Fingerprint, error) {
 // the expected algorithm and that the key identifier matches the provided verifier.
 // Also verifies the crit header contains the expected critical labels.
 func verifySigProtectedHeader(data []byte, expectedAlg int64, verifier *xdsa.PublicKey) (*sigProtectedHeader, error) {
+	if verifier == nil {
+		return nil, ErrUnexpectedKey
+	}
 	var header sigProtectedHeader
 	if err := cbor.Unmarshal(data, &header); err != nil {
 		return nil, err
@@ -920,6 +923,9 @@ func verifySigProtectedHeader(data []byte, expectedAlg int64, verifier *xdsa.Pub
 // verifyEncProtectedHeader verifies the encryption protected header contains exactly
 // the expected algorithm and that the key identifier matches the provided recipient.
 func verifyEncProtectedHeader(data []byte, expectedAlg int64, recipient *xhpke.SecretKey) error {
+	if recipient == nil {
+		return ErrUnexpectedKey
+	}
 	var header encProtectedHeader
 	if err := cbor.Unmarshal(data, &header); err != nil {
 		return err
